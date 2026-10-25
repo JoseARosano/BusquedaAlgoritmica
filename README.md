@@ -3,7 +3,7 @@
 
 Este repositorio contiene una aplicación web interactiva desarrollada para la visualización, análisis y comprensión del funcionamiento de algoritmos clásicos de búsqueda en grafos. La herramienta se ejecuta íntegramente a través de un único archivo HTML, lo que facilita su despliegue y uso sin necesidad de configuración ni entornos de servidor.
 
-**[Demostración funcional en línea](https://josearosano.github.io/BusquedaAlgoritmica/)**
+**[Demostración en línea](https://josearosano.github.io/BusquedaAlgoritmica/)**
 
 ## Funcionalidades Principales
 
