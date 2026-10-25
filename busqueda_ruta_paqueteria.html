@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualizador de Búsqueda Algorítmica</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #020617; /* slate-950 */
+            color: #f8fafc;
+        }
+
+        /* Contenedor principal del mapa */
+        #grid-container {
+            padding: 16px;
+            background-color: #0f172a; /* slate-900 */
+            border: 2px solid #1e293b;
+            border-radius: 16px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7), inset 0 0 20px rgba(0,0,0,0.5);
+            display: inline-block;
+            transition: all 0.3s ease;
+        }
+
+        /* Forzar grid por si Tailwind sufre retrasos de CDN */
+        #grid { display: grid; }
+
+        /* Borde luminoso en modo edición */
+        #grid-container.edit-mode {
+            border-color: #d946ef;
+            box-shadow: 0 0 30px rgba(217, 70, 239, 0.3), inset 0 0 20px rgba(0,0,0,0.5);
+        }
+
+        .edit-mode .cell-path-base { cursor: pointer; }
+        .edit-mode .cell-wall { cursor: pointer; }
+        .edit-mode .cell-path-base:hover { background-color: rgba(255, 255, 255, 0.1); }
+
+        /* Paredes 3D */
+        .cell-wall {
+            background-color: #1e293b;
+            background-image: repeating-linear-gradient(45deg, rgba(255,255,255,0.02) 0px, rgba(255,255,255,0.02) 4px, transparent 4px, transparent 8px);
+            border-radius: 6px;
+            border-top: 2px solid #334155;
+            border-left: 2px solid #334155;
+            border-bottom: 3px solid #020617;
+            border-right: 3px solid #020617;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.8);
+            z-index: 5;
+            transition: all 0.2s;
+        }
+
+        /* Casillas transitables (hundidas) */
+        .cell-path-base {
+            background-color: #0b1120;
+            border-radius: 6px;
+            border: 1px solid rgba(255,255,255,0.02);
+            box-shadow: inset 2px 2px 6px rgba(0,0,0,0.9), inset -1px -1px 3px rgba(255,255,255,0.05);
+            transition: background-color 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        /* Estados de Búsqueda */
+        .cell-frontier {
+            background-color: rgba(217, 119, 6, 0.4) !important;
+            box-shadow: inset 0 0 12px rgba(245, 158, 11, 0.6) !important;
+            border: 1px solid rgba(245, 158, 11, 0.4);
+        }
+
+        .cell-expanded {
+            background-color: rgba(29, 78, 216, 0.5) !important;
+            box-shadow: inset 0 0 15px rgba(59, 130, 246, 0.5) !important;
+            border: 1px solid rgba(59, 130, 246, 0.4);
+        }
+
+        .cell-optimal {
+            background-color: rgba(16, 185, 129, 0.7) !important;
+            box-shadow: inset 0 0 20px rgba(52, 211, 153, 0.8), 0 0 10px rgba(16, 185, 129, 0.4) !important;
+            border: 1px solid rgba(52, 211, 153, 0.8);
+            z-index: 10;
+        }
+
+        /* Marcadores interactivos */
+        .marker-start {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            border: 5px solid #22d3ee;
+            box-shadow: 0 0 10px #22d3ee, inset 0 0 8px #22d3ee;
+            z-index: 20;
+            cursor: grab;
+        }
+        .marker-start:active { cursor: grabbing; }
+
+        .marker-goal {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background-color: #d946ef;
+            box-shadow: 0 0 15px #d946ef, 0 0 25px rgba(217, 70, 239, 0.6);
+            z-index: 20;
+            cursor: grab;
+        }
+        .marker-goal:active { cursor: grabbing; }
+
+        /* Paneles */
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(51, 65, 85, 0.5);
+        }
+
+        button:disabled, select:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+        
+        /* Modificadores Drag and Drop de las filas de costes */
+        .draggable-row { transition: background-color 0.2s, border-color 0.2s; }
+        .draggable-row.dragging {
+            opacity: 0.5;
+            background-color: #334155;
+            border-color: #38bdf8;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+        }
+
+        .log-panel {
+            scrollbar-width: thin;
+            scrollbar-color: #334155 transparent;
+        }
+        .log-panel::-webkit-scrollbar { width: 6px; }
+        .log-panel::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 10px; }
+        
+        .log-entry.active {
+            color: #34d399;
+            font-weight: 700;
+            background-color: rgba(52, 211, 153, 0.1);
+            border-left: 2px solid #34d399;
+            padding-left: 0.5rem;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-4 lg:p-8">
+
+    <div class="max-w-6xl w-full mx-auto text-center mb-6">
+        <h1 class="text-3xl lg:text-4xl font-black mb-2 bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-fuchsia-400 tracking-tight">
+            Visualizador de Búsqueda Algorítmica
+        </h1>
+        <p class="text-slate-400 text-sm font-medium mb-6">Máquina de estados con Grafo de Búsqueda (Graph Search)</p>
+
+        <div class="flex flex-col lg:flex-row gap-6 items-start justify-center">
+            
+            <!-- MAPA -->
+            <div class="flex flex-col items-center gap-4 mx-auto lg:mx-0">
+                <div id="grid-container">
+                    <div id="grid"></div>
+                </div>
+
+                <div class="flex flex-wrap justify-center gap-5 text-xs font-semibold text-slate-300 bg-slate-900/80 px-6 py-3 rounded-full border border-slate-700/50">
+                    <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full border-2 border-cyan-400"></div>Inicio</div>
+                    <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-fuchsia-500 shadow-[0_0_8px_#d946ef]"></div>Meta</div>
+                    <div class="flex items-center gap-2"><div class="w-3 h-3 rounded bg-amber-600/50 border border-amber-500/50"></div>Frontera</div>
+                    <div class="flex items-center gap-2"><div class="w-3 h-3 rounded bg-blue-700/50 border border-blue-500/50"></div>Expandidos</div>
+                    <div class="flex items-center gap-2"><div class="w-3 h-3 rounded bg-emerald-500 border border-emerald-400 shadow-[0_0_5px_#10b981]"></div>Ruta</div>
+                </div>
+
+                <!-- DISCLAIMERS -->
+                <div class="text-slate-400 text-xs text-left mt-2 bg-slate-900/40 p-4 rounded-lg border border-slate-800 space-y-2 leading-relaxed max-w-[500px]">
+                    <p>¹ <strong>El orden de la lista de costes</strong> afecta al resultado del algoritmo, pues marca el orden de inserción de cada nodo en la lista abierta.</p>
+                    <p>² <strong>Tratamiento de estados repetidos:</strong> en el conteo de iteraciones, nodos visitados y expandidos, no se tienen en cuenta aquellos nodos previamente expandidos (como sí hace simpleai) ni nodos no accesibles.</p>
+                </div>
+            </div>
+
+            <!-- CONTROLES Y LOG -->
+            <div class="glass-panel rounded-2xl p-5 flex flex-col gap-4 shadow-2xl w-full max-w-md mx-auto lg:mx-0 text-left h-[800px]">
+                
+                <button id="btnToggleEdit" class="w-full py-2.5 rounded-lg font-bold transition-all shadow-md bg-slate-700 hover:bg-slate-600 text-white uppercase tracking-wider text-sm flex items-center justify-center gap-2 border border-slate-500 flex-shrink-0">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                    <span>Diseñar Mapa</span>
+                </button>
+
+                <div class="flex flex-col gap-1 mt-1 flex-shrink-0">
+                    <label class="text-xs font-bold text-slate-400 uppercase tracking-wider">Algoritmo</label>
+                    <select id="algoSelect" class="bg-slate-800 border border-slate-600 text-white rounded-lg px-4 py-2 outline-none focus:border-cyan-400 transition-colors w-full font-semibold cursor-pointer text-sm">
+                        <option value="BFS">BFS (Búsqueda en Anchura)</option>
+                        <option value="DFS">DFS (Búsqueda en Profundidad)</option>
+                        <option value="UCS">UCS (Coste Uniforme)</option>
+                    </select>
+                </div>
+
+                <!-- CONFIGURACIÓN DE MOVIMIENTOS Y COSTES (DRAGGABLE) -->
+                <div class="flex flex-col gap-1 flex-shrink-0">
+                    <label class="text-xs font-bold text-slate-400 uppercase tracking-wider">Costes¹ (Arrastra para reordenar)</label>
+                    <div class="bg-slate-900/80 p-2 rounded-lg border border-slate-700/50 text-xs">
+                        <div class="grid grid-cols-2 gap-1 mb-2 border-b border-slate-700 pb-1">
+                            <div class="text-slate-500 font-semibold text-center pl-4">Dirección (Orden)</div>
+                            <div class="text-slate-500 font-semibold text-center pr-2">Coste Numérico</div>
+                        </div>
+                        
+                        <div id="cost-rows-container" class="flex flex-col gap-1.5">
+                            
+                            <!-- Arriba -->
+                            <div class="draggable-row flex items-center justify-between bg-slate-800 p-1.5 rounded border border-slate-600 cursor-grab active:cursor-grabbing hover:border-cyan-600" draggable="true" data-dir="up">
+                                <div class="flex items-center gap-2 font-medium w-1/2 ml-2 pointer-events-none">
+                                    <svg class="w-4 h-4 text-slate-500" fill="currentColor" viewBox="0 0 16 16"><path d="M7 2a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zM7 5a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zM7 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zM7 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zM7 14a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/></svg>
+                                    Arriba
+                                </div>
+                                <div class="flex items-center justify-center gap-2 w-1/2">
+                                    <button class="cost-btn cost-minus bg-slate-700 hover:bg-slate-600 rounded w-6 h-6 flex items-center justify-center font-bold text-slate-300 transition-colors">-</button>
+                                    <span class="cost-val text-slate-200 font-mono font-bold w-6 text-center text-sm">1</span>
+                                    <button class="cost-btn cost-plus bg-slate-700 hover:bg-slate-600 rounded w-6 h-6 flex items-center justify-center font-bold text-slate-300 transition-colors">+</button>
+                                </div>
+                            </div>
+
+                            <!-- Abajo -->
+                            <div class="draggable-row flex items-center justify-between bg-slate-800 p-1.5 rounded border border-slate-600 cursor-grab active:cursor-grabbing hover:border-cyan-600" draggable="true" data-dir="down">
+                                <div class="flex items-center gap-2 font-medium w-1/2 ml-2 pointer-events-none">
+                                    <svg class="w-4 h-4 text-slate-500" fill="currentColor" viewBox="0 0 16 16"><path d="M7 2a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zM7 5a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zM7 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zM7 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zM7 14a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/></svg>
+                                    Abajo
+                                </div>
+                                <div class="flex items-center justify-center gap-2 w-1/2">
+                                    <button class="cost-btn cost-minus bg-slate-700 hover:bg-slate-600 rounded w-6 h-6 flex items-center justify-center font-bold text-slate-300 transition-colors">-</button>
+                                    <span class="cost-val text-slate-200 font-mono font-bold w-6 text-center text-sm">1</span>
+                                    <button class="cost-btn cost-plus bg-slate-700 hover:bg-slate-600 rounded w-6 h-6 flex items-center justify-center font-bold text-slate-300 transition-colors">+</button>
+                                </div>
+                            </div>
+
+                            <!-- Derecha -->
+                            <div class="draggable-row flex items-center justify-between bg-slate-800 p-1.5 rounded border border-slate-600 cursor-grab active:cursor-grabbing hover:border-cyan-600" draggable="true" data-dir="right">
+                                <div class="flex items-center gap-2 font-medium w-1/2 ml-2 pointer-events-none">
+                                    <svg class="w-4 h-4 text-slate-500" fill="currentColor" viewBox="0 0 16 16"><path d="M7 2a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zM7 5a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zM7 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zM7 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zM7 14a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/></svg>
+                                    Derecha
+                                </div>
+                                <div class="flex items-center justify-center gap-2 w-1/2">
+                                    <button class="cost-btn cost-minus bg-slate-700 hover:bg-slate-600 rounded w-6 h-6 flex items-center justify-center font-bold text-slate-300 transition-colors">-</button>
+                                    <span class="cost-val text-slate-200 font-mono font-bold w-6 text-center text-sm">1</span>
+                                    <button class="cost-btn cost-plus bg-slate-700 hover:bg-slate-600 rounded w-6 h-6 flex items-center justify-center font-bold text-slate-300 transition-colors">+</button>
+                                </div>
+                            </div>
+
+                            <!-- Izquierda -->
+                            <div class="draggable-row flex items-center justify-between bg-slate-800 p-1.5 rounded border border-slate-600 cursor-grab active:cursor-grabbing hover:border-cyan-600" draggable="true" data-dir="left">
+                                <div class="flex items-center gap-2 font-medium w-1/2 ml-2 pointer-events-none">
+                                    <svg class="w-4 h-4 text-slate-500" fill="currentColor" viewBox="0 0 16 16"><path d="M7 2a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zM7 5a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zM7 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zM7 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zM7 14a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/></svg>
+                                    Izquierda
+                                </div>
+                                <div class="flex items-center justify-center gap-2 w-1/2">
+                                    <button class="cost-btn cost-minus bg-slate-700 hover:bg-slate-600 rounded w-6 h-6 flex items-center justify-center font-bold text-slate-300 transition-colors">-</button>
+                                    <span class="cost-val text-slate-200 font-mono font-bold w-6 text-center text-sm">1</span>
+                                    <button class="cost-btn cost-plus bg-slate-700 hover:bg-slate-600 rounded w-6 h-6 flex items-center justify-center font-bold text-slate-300 transition-colors">+</button>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex flex-col gap-1 flex-shrink-0">
+                    <label class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Navegación y Velocidad</label>
+                    <div class="grid grid-cols-4 gap-2 mb-2">
+                        <button id="btnPrev" class="col-span-1 p-2 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 rounded-lg transition-all flex justify-center shadow-md">
+                            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+                        </button>
+                        <button id="btnPlayPause" class="col-span-2 p-2 bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 rounded-lg font-bold transition-all shadow-[0_0_15px_rgba(34,211,238,0.4)] flex justify-center items-center gap-2 text-white">
+                            <span>Reproducir</span>
+                        </button>
+                        <button id="btnNext" class="col-span-1 p-2 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 rounded-lg transition-all flex justify-center shadow-md">
+                            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                        </button>
+                    </div>
+                    <input type="range" id="speedSlider" min="20" max="500" value="200" class="w-full accent-cyan-500 cursor-pointer">
+                </div>
+
+                <!-- ESTADÍSTICAS -->
+                <div class="grid grid-cols-3 gap-y-3 gap-x-2 bg-slate-900/60 p-3 rounded-lg border border-slate-700/50 text-xs flex-shrink-0">
+                    <div class="flex flex-col"><span class="text-slate-500 font-bold uppercase" style="font-size:0.65rem;">Longitud solución</span><span id="stat-len" class="text-cyan-400 font-mono font-bold">-</span></div>
+                    <div class="flex flex-col"><span class="text-slate-500 font-bold uppercase" style="font-size:0.65rem;">Coste solución</span><span id="stat-cost" class="text-cyan-400 font-mono font-bold">-</span></div>
+                    <div class="flex flex-col"><span class="text-slate-500 font-bold uppercase" style="font-size:0.65rem;">Máx. lista abierta</span><span id="stat-max-open" class="text-amber-400 font-mono font-bold">0</span></div>
+                    <div class="flex flex-col"><span class="text-slate-500 font-bold uppercase" style="font-size:0.65rem;">Nodos visitados²</span><span id="stat-visited" class="text-emerald-400 font-mono font-bold">0</span></div>
+                    <div class="flex flex-col"><span class="text-slate-500 font-bold uppercase" style="font-size:0.65rem;">Iteraciones²</span><span id="stat-iter" class="text-fuchsia-400 font-mono font-bold">0</span></div>
+                    <div class="flex flex-col"><span class="text-slate-500 font-bold uppercase" style="font-size:0.65rem;">Nodos expandidos²</span><span id="stat-expanded" class="text-blue-400 font-mono font-bold">0</span></div>
+                </div>
+
+                <!-- LOG PANEL -->
+                <div class="flex flex-col flex-1 min-h-0 mt-1">
+                    <div class="flex justify-between items-center mb-1">
+                        <label class="text-xs font-bold text-slate-400 uppercase tracking-wider">Registro de Acciones</label>
+                        <span id="stepCounter" class="text-xs font-mono text-cyan-400 bg-cyan-900/30 px-2 py-0.5 rounded">0 / 0</span>
+                    </div>
+                    <div id="logPanel" class="log-panel flex-1 bg-slate-900/50 rounded-lg p-3 text-sm font-mono text-slate-300 overflow-y-auto space-y-1.5 border border-slate-800">
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // MAPA EXACTO 9x8 (Start(2,1), Goal(5,3))
+        let rawMap = [
+            ['#','#','#','#','#','#','#','#','#'],
+            ['#',' ','T',' ',' ',' ',' ',' ','#'],
+            ['#',' ','#',' ','#','#','#',' ','#'],
+            ['#',' ',' ',' ','#','P',' ',' ','#'],
+            ['#',' ','#','#',' ',' ',' ',' ','#'],
+            ['#',' ',' ',' ',' ',' ',' ',' ','#'],
+            ['#',' ',' ',' ',' ',' ',' ',' ','#'],
+            ['#','#','#','#','#','#','#','#','#']
+        ];
+
+        const ROWS = 8;
+        const COLS = 9;
+        const CELL_SIZE = 42;
+        const GAP = 4;
+
+        let startPos = {r: 0, c: 0};
+        let goalPos = {r: 0, c: 0};
+
+        let isEditMode = false;
+        let frames = [];
+        let currentFrameIndex = 0;
+        let isPlaying = false;
+        let playTimeout = null;
+
+        const gridContainer = document.getElementById('grid-container');
+        const gridEl = document.getElementById('grid');
+        const logPanelEl = document.getElementById('logPanel');
+        const stepCounterEl = document.getElementById('stepCounter');
+        
+        const btnToggleEdit = document.getElementById('btnToggleEdit');
+        const btnPrev = document.getElementById('btnPrev');
+        const btnNext = document.getElementById('btnNext');
+        const btnPlayPause = document.getElementById('btnPlayPause');
+        const algoSelect = document.getElementById('algoSelect');
+        const speedSlider = document.getElementById('speedSlider');
+        const costRowsContainer = document.getElementById('cost-rows-container');
+
+        const statLen = document.getElementById('stat-len');
+        const statCost = document.getElementById('stat-cost');
+        const statMaxOpen = document.getElementById('stat-max-open');
+        const statVisited = document.getElementById('stat-visited');
+        const statIter = document.getElementById('stat-iter');
+        const statExpanded = document.getElementById('stat-expanded');
+
+        // ======== RENDERIZADO DOM ========
+
+        function initDOMGrid() {
+            gridEl.style.gridTemplateColumns = `repeat(${COLS}, ${CELL_SIZE}px)`;
+            gridEl.style.gridTemplateRows = `repeat(${ROWS}, ${CELL_SIZE}px)`;
+            gridEl.style.gap = `${GAP}px`;
+            gridEl.innerHTML = '';
+
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    const char = rawMap[r][c];
+                    const cell = document.createElement('div');
+                    cell.id = `cell-${r}-${c}`;
+                    
+                    if (char === '#') {
+                        cell.className = 'cell-wall';
+                    } else {
+                        cell.className = 'cell-path-base relative flex items-center justify-center';
+                        if (char === 'T') {
+                            startPos = {r, c};
+                            cell.innerHTML = `<div id="drag-start" class="marker-start" draggable="true" ondragstart="handleDragStart(event, 'T')"></div>`;
+                        } else if (char === 'P') {
+                            goalPos = {r, c};
+                            cell.innerHTML = `<div id="drag-goal" class="marker-goal" draggable="true" ondragstart="handleDragStart(event, 'P')"></div>`;
+                        }
+                    }
+
+                    cell.addEventListener('click', () => handleCellClick(r, c));
+                    cell.addEventListener('dragover', (e) => handleDragOver(e, r, c));
+                    cell.addEventListener('drop', (e) => handleDrop(e, r, c));
+                    
+                    gridEl.appendChild(cell);
+                }
+            }
+        }
+
+        function handleCellClick(r, c) {
+            if (!isEditMode) return;
+            const char = rawMap[r][c];
+            if (char === 'T' || char === 'P') return;
+            rawMap[r][c] = (char === '#') ? ' ' : '#';
+            initDOMGrid();
+        }
+
+        function handleDragStart(e, type) {
+            if (!isEditMode) { e.preventDefault(); return; }
+            e.dataTransfer.setData('text/plain', type);
+        }
+
+        function handleDragOver(e, r, c) {
+            if (!isEditMode) return;
+            if (rawMap[r][c] === ' ') e.preventDefault();
+        }
+
+        function handleDrop(e, r, c) {
+            if (!isEditMode) return;
+            e.preventDefault();
+            const type = e.dataTransfer.getData('text/plain');
+            if (type !== 'T' && type !== 'P') return;
+            if (rawMap[r][c] !== ' ') return; 
+            
+            for (let ir = 0; ir < ROWS; ir++) {
+                for (let ic = 0; ic < COLS; ic++) {
+                    if (rawMap[ir][ic] === type) rawMap[ir][ic] = ' ';
+                }
+            }
+            rawMap[r][c] = type;
+            initDOMGrid();
+        }
+
+        function toggleEditMode() {
+            isEditMode = !isEditMode;
+
+            if (isEditMode) {
+                pauseLoop();
+                btnToggleEdit.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg><span>Simulación</span>`;
+                btnToggleEdit.classList.replace('bg-slate-700', 'bg-fuchsia-600');
+                btnToggleEdit.classList.replace('hover:bg-slate-600', 'hover:bg-fuchsia-500');
+                btnToggleEdit.classList.replace('border-slate-500', 'border-fuchsia-400');
+                gridContainer.classList.add('edit-mode');
+
+                btnPrev.disabled = btnNext.disabled = btnPlayPause.disabled = algoSelect.disabled = speedSlider.disabled = true;
+                
+                // Deshabilitar panel de costes
+                costRowsContainer.classList.add('opacity-50', 'pointer-events-none');
+                
+                for (let r = 0; r < ROWS; r++) {
+                    for (let c = 0; c < COLS; c++) {
+                        const cell = document.getElementById(`cell-${r}-${c}`);
+                        if(cell) cell.classList.remove('cell-frontier', 'cell-expanded', 'cell-optimal');
+                    }
+                }
+                
+                logPanelEl.innerHTML = `<div class="text-fuchsia-400 text-center font-bold mt-10">Modo Edición Activado.<br><br>Click para poner/quitar paredes.<br>Arrastra el Inicio (Cian) y la Meta (Fucsia).</div>`;
+                stepCounterEl.textContent = `- / -`;
+                
+            } else {
+                btnToggleEdit.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg><span>Diseñar Mapa</span>`;
+                btnToggleEdit.classList.replace('bg-fuchsia-600', 'bg-slate-700');
+                btnToggleEdit.classList.replace('hover:bg-fuchsia-500', 'hover:bg-slate-600');
+                btnToggleEdit.classList.replace('border-fuchsia-400', 'border-slate-500');
+                gridContainer.classList.remove('edit-mode');
+
+                btnPrev.disabled = btnNext.disabled = btnPlayPause.disabled = algoSelect.disabled = speedSlider.disabled = false;
+                
+                // Habilitar panel de costes
+                costRowsContainer.classList.remove('opacity-50', 'pointer-events-none');
+                
+                resetAll(); 
+            }
+        }
+
+
+        // ======== GESTIÓN DE COSTES (DRAG & DROP Y BOTONES) ========
+
+        let draggedRow = null;
+
+        costRowsContainer.addEventListener('dragstart', (e) => {
+            if (isEditMode) { e.preventDefault(); return; }
+            draggedRow = e.target.closest('.draggable-row');
+            if (draggedRow) {
+                setTimeout(() => draggedRow.classList.add('dragging'), 0);
+            }
+        });
+
+        costRowsContainer.addEventListener('dragend', (e) => {
+            if (draggedRow) {
+                draggedRow.classList.remove('dragging');
+                draggedRow = null;
+                if (!isEditMode) resetAll();
+            }
+        });
+
+        costRowsContainer.addEventListener('dragover', (e) => {
+            if (isEditMode) return;
+            e.preventDefault();
+            const afterElement = getDragAfterElement(costRowsContainer, e.clientY);
+            if (draggedRow) {
+                if (afterElement == null) {
+                    costRowsContainer.appendChild(draggedRow);
+                } else {
+                    costRowsContainer.insertBefore(draggedRow, afterElement);
+                }
+            }
+        });
+
+        function getDragAfterElement(container, y) {
+            const draggableElements = [...container.querySelectorAll('.draggable-row:not(.dragging)')];
+            return draggableElements.reduce((closest, child) => {
+                const box = child.getBoundingClientRect();
+                const offset = y - box.top - box.height / 2;
+                if (offset < 0 && offset > closest.offset) {
+                    return { offset: offset, element: child };
+                } else {
+                    return closest;
+                }
+            }, { offset: Number.NEGATIVE_INFINITY }).element;
+        }
+
+        // Listeners para botones + y -
+        document.querySelectorAll('.cost-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                if (isEditMode) return;
+                const row = e.target.closest('.draggable-row');
+                const valSpan = row.querySelector('.cost-val');
+                let val = parseInt(valSpan.textContent);
+                
+                if (e.target.classList.contains('cost-minus') && val > 0) {
+                    val--;
+                } else if (e.target.classList.contains('cost-plus')) {
+                    val++;
+                }
+                
+                valSpan.textContent = val;
+                resetAll();
+            });
+        });
+
+
+        // ======== MOTOR ALGORÍTMICO ========
+
+        function getDirections() {
+            // Lee el DOM en el orden actual visual y extrae los costes
+            const rowEls = document.querySelectorAll('.draggable-row');
+            const dirs = [];
+            
+            rowEls.forEach(row => {
+                const dirType = row.getAttribute('data-dir');
+                const cost = parseInt(row.querySelector('.cost-val').textContent) || 0;
+                
+                if (dirType === 'up') dirs.push({ name: 'Arriba', dr: -1, dc: 0, cost });
+                else if (dirType === 'down') dirs.push({ name: 'Abajo', dr: 1, dc: 0, cost });
+                else if (dirType === 'right') dirs.push({ name: 'Derecha', dr: 0, dc: 1, cost });
+                else if (dirType === 'left') dirs.push({ name: 'Izquierda', dr: 0, dc: -1, cost });
+            });
+            
+            return dirs;
+        }
+
+        function precomputeAlgorithm() {
+            frames = [];
+            const algo = algoSelect.value;
+            let gridState = Array(ROWS).fill().map(() => Array(COLS).fill('empty'));
+
+            let stats = { len: '-', cost: '-', maxOpen: 0, visited: 0, iter: 0, expanded: 0 };
+
+            const recordFrame = (message) => {
+                frames.push({ grid: gridState.map(row => [...row]), msg: message });
+            };
+
+            recordFrame(`Iniciando algoritmo ${algo}...`);
+
+            // Inicialización de Búsqueda de Grafos
+            let openList = [{r: startPos.r, c: startPos.c, path: [], cost: 0}];
+            let inOpenSet = new Set([`${startPos.r},${startPos.c}`]);
+            let closedSet = new Set();
+            
+            const dirs = getDirections();
+            let found = false;
+            let optimalPath = [];
+
+            gridState[startPos.r][startPos.c] = 'frontier';
+            recordFrame(`Añadido a frontera: (${startPos.c},${startPos.r}) con coste 0`);
+
+            while (openList.length > 0) {
+                if (openList.length > stats.maxOpen) stats.maxOpen = openList.length;
+
+                // 1. Extraer (Pop)
+                let curr;
+                if (algo === 'BFS') {
+                    curr = openList.shift();
+                } else if (algo === 'DFS') {
+                    curr = openList.pop();
+                } else if (algo === 'UCS') {
+                    openList.sort((a, b) => a.cost - b.cost); 
+                    curr = openList.shift();
+                }
+                
+                let key = `${curr.r},${curr.c}`;
+                inOpenSet.delete(key);
+                stats.iter++;
+                
+                // 2. Manejo de Grafo: evitar re-evaluaciones.
+                if (closedSet.has(key)) continue;
+                
+                // 3. Marcar cerrado / visitado
+                closedSet.add(key);
+                stats.visited = closedSet.size;
+                
+                // Pintamos de 'Visitado' todos los evaluados (excepto el Inicio).
+                if(rawMap[curr.r][curr.c] !== 'T') {
+                    gridState[curr.r][curr.c] = 'expanded';
+                }
+
+                // 4. Test de Meta (¡Al evaluar!)
+                if (curr.r === goalPos.r && curr.c === goalPos.c) {
+                    found = true;
+                    optimalPath = [...curr.path, {r: curr.r, c: curr.c}];
+                    stats.len = optimalPath.length; // Ya cuenta el +1 de los nodos extra
+                    stats.cost = curr.cost;
+                    recordFrame(`¡Meta encontrada en (${curr.c},${curr.r}) con coste ${curr.cost}!`);
+                    break;
+                }
+
+                // 5. Expansión
+                stats.expanded++;
+                recordFrame(`Expandiendo: (${curr.c},${curr.r})`);
+
+                // 6. Generar vecinos según el orden y coste definido (que coincide con el DOM)
+                for (let dir of dirs) {
+                    let nr = curr.r + dir.dr;
+                    let nc = curr.c + dir.dc;
+                    let nkey = `${nr},${nc}`;
+
+                    if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS && rawMap[nr][nc] !== '#') {
+                        // Graph Search estricto
+                        if (!closedSet.has(nkey) && !inOpenSet.has(nkey)) {
+                            let newCost = curr.cost + dir.cost;
+                            openList.push({ r: nr, c: nc, path: [...curr.path, {r: curr.r, c: curr.c}], cost: newCost });
+                            inOpenSet.add(nkey);
+                            
+                            // Se colorea de frontera, aunque sea la meta 'P'
+                            if(rawMap[nr][nc] !== 'T') {
+                                gridState[nr][nc] = 'frontier';
+                            }
+                            recordFrame(`Añadido a frontera: (${nc},${nr}) mov. ${dir.name} [Coste: ${newCost}]`);
+                        }
+                    }
+                }
+            }
+
+            // Stats al DOM
+            statLen.textContent = stats.len;
+            statCost.textContent = stats.cost;
+            statMaxOpen.textContent = stats.maxOpen;
+            statVisited.textContent = stats.visited;
+            statIter.textContent = stats.iter;
+            statExpanded.textContent = stats.expanded;
+
+            if (found) {
+                recordFrame(`Trazando ruta encontrada...`);
+                for (let i = 1; i < optimalPath.length - 1; i++) {
+                    let p = optimalPath[i];
+                    gridState[p.r][p.c] = 'optimal';
+                    recordFrame(`Marcando ruta: (${p.c},${p.r})`);
+                }
+                recordFrame(`Búsqueda finalizada con éxito.`);
+            } else {
+                recordFrame(`Búsqueda finalizada. No hay ruta posible.`);
+            }
+        }
+
+
+        // ======== VISUALIZACIÓN Y CONTROLES ========
+
+        function buildLogPanel() {
+            logPanelEl.innerHTML = '';
+            frames.forEach((frame, idx) => {
+                const div = document.createElement('div');
+                div.id = `log-entry-${idx}`;
+                div.className = 'log-entry text-slate-400 transition-colors duration-200 py-0.5 rounded';
+                div.textContent = `[Paso ${idx}] ${frame.msg}`;
+                logPanelEl.appendChild(div);
+            });
+        }
+
+        function renderFrame(index) {
+            if (isEditMode) return;
+            const frame = frames[index];
+            if (!frame) return;
+
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    if (rawMap[r][c] === '#') continue; 
+                    
+                    const cell = document.getElementById(`cell-${r}-${c}`);
+                    if(!cell) continue;
+
+                    const state = frame.grid[r][c];
+                    cell.classList.remove('cell-frontier', 'cell-expanded', 'cell-optimal');
+
+                    if (state === 'frontier') cell.classList.add('cell-frontier');
+                    else if (state === 'expanded') cell.classList.add('cell-expanded');
+                    else if (state === 'optimal') cell.classList.add('cell-optimal');
+                }
+            }
+
+            const activeEls = logPanelEl.querySelectorAll('.active');
+            activeEls.forEach(el => el.classList.remove('active'));
+            
+            const targetLog = document.getElementById(`log-entry-${index}`);
+            if (targetLog) {
+                targetLog.classList.add('active');
+                targetLog.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+
+            stepCounterEl.textContent = `${index} / ${frames.length - 1}`;
+            btnPrev.disabled = (index === 0);
+            btnNext.disabled = (index === frames.length - 1);
+            if (index === frames.length - 1 && isPlaying) pauseLoop();
+        }
+
+        function getDelay() {
+            const sliderVal = parseInt(speedSlider.value);
+            const minDelay = 20, maxDelay = 600;
+            return maxDelay - (sliderVal / speedSlider.max) * (maxDelay - minDelay);
+        }
+
+        function playLoop() {
+            if (!isPlaying || isEditMode) return;
+            if (currentFrameIndex < frames.length - 1) {
+                currentFrameIndex++;
+                renderFrame(currentFrameIndex);
+                playTimeout = setTimeout(() => requestAnimationFrame(playLoop), getDelay());
+            } else {
+                pauseLoop();
+            }
+        }
+
+        function togglePlay() {
+            if (isEditMode) return;
+            if (isPlaying) {
+                pauseLoop();
+            } else {
+                if (currentFrameIndex >= frames.length - 1) currentFrameIndex = 0;
+                
+                isPlaying = true;
+                btnPlayPause.innerHTML = `<span>Pausa</span>`;
+                btnPlayPause.classList.replace('bg-cyan-600', 'bg-amber-600');
+                btnPlayPause.classList.replace('hover:bg-cyan-500', 'hover:bg-amber-500');
+                btnPlayPause.classList.replace('active:bg-cyan-700', 'active:bg-amber-700');
+                btnPlayPause.style.boxShadow = '0 0 15px rgba(245,158,11,0.4)';
+                playLoop();
+            }
+        }
+
+        function pauseLoop() {
+            isPlaying = false;
+            clearTimeout(playTimeout);
+            if(isEditMode) return;
+            
+            btnPlayPause.innerHTML = `<span>Reproducir</span>`;
+            btnPlayPause.classList.replace('bg-amber-600', 'bg-cyan-600');
+            btnPlayPause.classList.replace('hover:bg-amber-500', 'hover:bg-cyan-500');
+            btnPlayPause.classList.replace('active:bg-amber-700', 'active:bg-cyan-700');
+            btnPlayPause.style.boxShadow = '0 0 15px rgba(34,211,238,0.4)';
+        }
+
+        function resetAll() {
+            pauseLoop();
+            initDOMGrid();
+            precomputeAlgorithm();
+            buildLogPanel();
+            currentFrameIndex = 0;
+            renderFrame(0);
+        }
+
+        // ============ LISTENERS GENÉRICOS ============
+
+        btnToggleEdit.addEventListener('click', toggleEditMode);
+        btnPlayPause.addEventListener('click', togglePlay);
+        
+        btnPrev.addEventListener('click', () => {
+            if (isEditMode) return;
+            pauseLoop();
+            if (currentFrameIndex > 0) {
+                currentFrameIndex--;
+                renderFrame(currentFrameIndex);
+            }
+        });
+
+        btnNext.addEventListener('click', () => {
+            if (isEditMode) return;
+            pauseLoop();
+            if (currentFrameIndex < frames.length - 1) {
+                currentFrameIndex++;
+                renderFrame(currentFrameIndex);
+            }
+        });
+
+        algoSelect.addEventListener('change', () => {
+            if (!isEditMode) resetAll();
+        });
+
+        // Lanzamiento inicial
+        resetAll();
+    </script>
+</body>
+</html>
